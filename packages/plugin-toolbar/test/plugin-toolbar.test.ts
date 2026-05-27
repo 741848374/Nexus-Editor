@@ -1,0 +1,492 @@
+import { describe, expect, it } from "vitest";
+
+import { createEditor } from "@floatboat/nexus-core";
+import {
+  toggleBold,
+  toggleItalic,
+  toggleInlineCode,
+  insertLink,
+  toggleHeading,
+  toggleOrderedList,
+  toggleUnorderedList,
+  createToolbarPlugin,
+  createToolbarUI,
+} from "../src/index";
+
+describe("toggleBold", () => {
+  it("wraps selected text with **", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "hello world" });
+
+    editor.setSelection(6, 11);
+    toggleBold(editor);
+
+    expect(editor.getDocument()).toBe("hello **world**");
+    editor.destroy();
+  });
+
+  it("removes ** when already wrapped", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "hello **world**" });
+
+    editor.setSelection(8, 13);
+    toggleBold(editor);
+
+    expect(editor.getDocument()).toBe("hello world");
+    editor.destroy();
+  });
+});
+
+describe("toggleItalic", () => {
+  it("wraps selected text with *", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "hello world" });
+
+    editor.setSelection(6, 11);
+    toggleItalic(editor);
+
+    expect(editor.getDocument()).toBe("hello *world*");
+    editor.destroy();
+  });
+});
+
+describe("toggleInlineCode", () => {
+  it("wraps selected text with backticks", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "hello world" });
+
+    editor.setSelection(6, 11);
+    toggleInlineCode(editor);
+
+    expect(editor.getDocument()).toBe("hello `world`");
+    editor.destroy();
+  });
+});
+
+describe("insertLink", () => {
+  it("inserts a link template with selected text", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "click here" });
+
+    editor.setSelection(6, 10);
+    insertLink(editor);
+
+    expect(editor.getDocument()).toBe("click [here](url)");
+    editor.destroy();
+  });
+
+  it("inserts default link text when nothing is selected", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "text " });
+
+    editor.setSelection(5, 5);
+    insertLink(editor);
+
+    expect(editor.getDocument()).toBe("text [link text](url)");
+    editor.destroy();
+  });
+});
+
+describe("toggleHeading", () => {
+  it("adds heading prefix to current line", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "Title" });
+
+    editor.setSelection(2);
+    toggleHeading(editor, 2);
+
+    expect(editor.getDocument()).toBe("## Title");
+    editor.destroy();
+  });
+
+  it("removes heading when same level is toggled", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "## Title" });
+
+    editor.setSelection(5);
+    toggleHeading(editor, 2);
+
+    expect(editor.getDocument()).toBe("Title");
+    editor.destroy();
+  });
+
+  it("switches heading level", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "## Title" });
+
+    editor.setSelection(5);
+    toggleHeading(editor, 1);
+
+    expect(editor.getDocument()).toBe("# Title");
+    editor.destroy();
+  });
+});
+
+describe("createToolbarPlugin", () => {
+  it("returns a plugin with keyboard shortcuts", () => {
+    const plugin = createToolbarPlugin();
+
+    expect(plugin.name).toBe("plugin-toolbar");
+    expect(plugin.shortcuts).toBeDefined();
+    expect(plugin.shortcuts!.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("integrates with the editor shortcut system", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({
+      container,
+      initialValue: "hello world",
+      plugins: [createToolbarPlugin()],
+    });
+
+    editor.setSelection(6, 11);
+    editor.runShortcut("Mod-b");
+
+    expect(editor.getDocument()).toBe("hello **world**");
+    editor.destroy();
+  });
+
+  it("registers every formatting action as a slash command", () => {
+    const plugin = createToolbarPlugin();
+    const ids = (plugin.slashCommands ?? []).map((c) => c.id);
+    // Spot-check the four user-facing categories; the full catalogue is
+    // documented in src/index.ts and intentionally not pinned here so
+    // adding more commands later isn't a test churn.
+    expect(ids).toEqual(
+      expect.arrayContaining(["h1", "h2", "bold", "image", "hr"]),
+    );
+    for (const cmd of plugin.slashCommands ?? []) {
+      expect(typeof cmd.run).toBe("function");
+    }
+  });
+
+  it("executes a slash command through the editor's command list", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({
+      container,
+      initialValue: "hello world",
+      plugins: [createToolbarPlugin()],
+    });
+
+    editor.setSelection(6, 11);
+    const bold = editor.getSlashCommands().find((c) => c.id === "bold");
+    expect(bold).toBeDefined();
+    expect(bold?.run?.(editor)).toBe(true);
+    expect(editor.getDocument()).toBe("hello **world**");
+    editor.destroy();
+  });
+});
+
+describe("createToolbarUI", () => {
+  it("shows custom text tooltip for icon-only toolbar buttons", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "hello world" });
+    const toolbar = createToolbarUI(editor);
+    document.body.appendChild(toolbar.element);
+
+    const button = toolbar.element.querySelector<HTMLButtonElement>(
+      '[data-toolbar-action="unordered-list"]',
+    );
+    expect(button).not.toBeNull();
+    expect(button?.title).toBe("");
+    expect(button?.getAttribute("aria-label")).toBe("Unordered list");
+    expect(button?.dataset.toolbarTooltip).toBe("Unordered list");
+    expect(button?.getAttribute("aria-describedby")).toMatch(
+      /^nexus-toolbar-tooltip-/,
+    );
+
+    button?.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+
+    const tooltip = document.getElementById(
+      button?.getAttribute("aria-describedby") ?? "",
+    );
+    expect(tooltip?.getAttribute("role")).toBe("tooltip");
+    expect(tooltip?.textContent).toBe("Unordered list");
+
+    button?.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true }));
+    expect(
+      document.getElementById(button?.getAttribute("aria-describedby") ?? ""),
+    ).toBeNull();
+
+    toolbar.destroy();
+    editor.destroy();
+  });
+});
+
+describe("toggleOrderedList", () => {
+  it("adds ordered prefix to current line", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "hello" });
+
+    editor.setSelection(0);
+    toggleOrderedList(editor);
+
+    expect(editor.getDocument()).toBe("1. hello");
+    editor.destroy();
+  });
+
+  it("removes ordered prefix when already OL", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "1. hello" });
+
+    editor.setSelection(3);
+    toggleOrderedList(editor);
+
+    expect(editor.getDocument()).toBe("hello");
+    editor.destroy();
+  });
+
+  it("switches UL to OL on single line", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "- hello" });
+
+    editor.setSelection(2);
+    toggleOrderedList(editor);
+
+    expect(editor.getDocument()).toBe("1. hello");
+    editor.destroy();
+  });
+
+  it("adds ordered prefix to all selected lines", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "a\nb\nc" });
+
+    editor.setSelection(0, 5);
+    toggleOrderedList(editor);
+
+    expect(editor.getDocument()).toBe("1. a\n1. b\n1. c");
+    editor.destroy();
+  });
+
+  it("removes ordered prefix from all selected OL lines", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({
+      container,
+      initialValue: "1. a\n2. b\n3. c",
+    });
+
+    editor.setSelection(0, 13);
+    toggleOrderedList(editor);
+
+    expect(editor.getDocument()).toBe("a\nb\nc");
+    editor.destroy();
+  });
+
+  it("switches all selected lines to OL even when mixed", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "1. a\n- b\nc" });
+
+    editor.setSelection(0, 9);
+    toggleOrderedList(editor);
+
+    expect(editor.getDocument()).toBe("1. a\n1. b\n1. c");
+    editor.destroy();
+  });
+
+  it("does not add prefix to empty lines", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "a\n\nc" });
+
+    editor.setSelection(0, 4);
+    toggleOrderedList(editor);
+
+    expect(editor.getDocument()).toBe("1. a\n\n1. c");
+    editor.destroy();
+  });
+
+  it("preserves indentation of selected lines", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "  1. a\n  - b" });
+
+    editor.setSelection(0, 12);
+    toggleOrderedList(editor);
+
+    expect(editor.getDocument()).toBe("  1. a\n  1. b");
+    editor.destroy();
+  });
+});
+
+describe("toggleUnorderedList", () => {
+  it("adds unordered prefix to current line", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "hello" });
+
+    editor.setSelection(0);
+    toggleUnorderedList(editor);
+
+    expect(editor.getDocument()).toBe("- hello");
+    editor.destroy();
+  });
+
+  it("removes unordered prefix when already UL", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "- hello" });
+
+    editor.setSelection(2);
+    toggleUnorderedList(editor);
+
+    expect(editor.getDocument()).toBe("hello");
+    editor.destroy();
+  });
+
+  it("switches OL to UL on single line", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "1. hello" });
+
+    editor.setSelection(3);
+    toggleUnorderedList(editor);
+
+    expect(editor.getDocument()).toBe("- hello");
+    editor.destroy();
+  });
+
+  it("adds unordered prefix to all selected lines", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "a\nb\nc" });
+
+    editor.setSelection(0, 5);
+    toggleUnorderedList(editor);
+
+    expect(editor.getDocument()).toBe("- a\n- b\n- c");
+    editor.destroy();
+  });
+
+  it("switches all selected lines to UL even when mixed", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "1. a\n- b\nc" });
+
+    editor.setSelection(0, 9);
+    toggleUnorderedList(editor);
+
+    expect(editor.getDocument()).toBe("- a\n- b\n- c");
+    editor.destroy();
+  });
+
+  it("preserves checkbox when switching OL to UL", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "1. [x] done" });
+
+    editor.setSelection(0);
+    toggleUnorderedList(editor);
+
+    expect(editor.getDocument()).toBe("- [x] done");
+    editor.destroy();
+  });
+
+  it("does not add prefix to empty lines", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "a\n\nc" });
+
+    editor.setSelection(0, 4);
+    toggleUnorderedList(editor);
+
+    expect(editor.getDocument()).toBe("- a\n\n- c");
+    editor.destroy();
+  });
+});
+
+describe("toggleBold multi-line", () => {
+  it("wraps each line in multi-line selection", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "a\nb\nc" });
+
+    editor.setSelection(0, 5);
+    toggleBold(editor);
+
+    expect(editor.getDocument()).toBe("**a**\n**b**\n**c**");
+    editor.destroy();
+  });
+
+  it("removes bold from each wrapped line", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "**a**\n**b**" });
+
+    editor.setSelection(0, 11);
+    toggleBold(editor);
+
+    expect(editor.getDocument()).toBe("a\nb");
+    editor.destroy();
+  });
+
+  it("wraps list item content without touching markers", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "1. aaa\n2. bbb" });
+
+    editor.setSelection(0, 12);
+    toggleBold(editor);
+
+    expect(editor.getDocument()).toBe("1. **aaa**\n2. **bbb**");
+    editor.destroy();
+  });
+
+  it("removes bold from list item content", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({
+      container,
+      initialValue: "1. **aaa**\n2. **bbb**",
+    });
+
+    editor.setSelection(0, 21);
+    toggleBold(editor);
+
+    expect(editor.getDocument()).toBe("1. aaa\n2. bbb");
+    editor.destroy();
+  });
+
+  it("makes all lines bold when mixed", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "**a**\nb" });
+
+    editor.setSelection(0, 7);
+    toggleBold(editor);
+
+    expect(editor.getDocument()).toBe("**a**\n**b**");
+    editor.destroy();
+  });
+
+  it("preserves empty lines", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "a\n\nc" });
+
+    editor.setSelection(0, 4);
+    toggleBold(editor);
+
+    expect(editor.getDocument()).toBe("**a**\n\n**c**");
+    editor.destroy();
+  });
+});
+
+describe("toggleBold cross-marker selection", () => {
+  it("handles selection that excludes trailing marker", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "hello **world**" });
+
+    editor.setSelection(0, 13);
+    toggleBold(editor);
+
+    expect(editor.getDocument()).toBe("**hello world**");
+    editor.destroy();
+  });
+
+  it("handles selection starting inside marker", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "**hello** world" });
+
+    editor.setSelection(2, 14);
+    toggleBold(editor);
+
+    expect(editor.getDocument()).toBe("**hello world**");
+    editor.destroy();
+  });
+
+  it("unwraps when only inner content of bold is selected", () => {
+    const container = document.createElement("div");
+    const editor = createEditor({ container, initialValue: "aa **hello** bb" });
+
+    editor.setSelection(3, 10);
+    toggleBold(editor);
+
+    expect(editor.getDocument()).toBe("aa hello bb");
+    editor.destroy();
+  });
+});
